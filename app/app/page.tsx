@@ -1,8 +1,8 @@
 ﻿"use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { COMPETENCIAS_CAPACIDADES } from "../../lib/competencias-capacidades";
-import LoadingOverlay from "../../components/LoadingOverlay"; // ← añadido
+import LoadingOverlay from "../../components/LoadingOverlay";
 
 export default function AppPage() {
   const [formulario, setFormulario] = useState({
@@ -24,7 +24,10 @@ export default function AppPage() {
   const [jsonGenerado, setJsonGenerado] = useState<any>(null);
   const [descargando, setDescargando] = useState(false);
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false); // ← añadido
+  const [loading, setLoading] = useState(false);
+
+  // Evitar doble envío (React 18 StrictMode duplica algunos efectos en dev)
+  const isSubmitting = useRef(false);
 
   useEffect(() => {
     if (formulario.area) {
@@ -32,6 +35,7 @@ export default function AppPage() {
       setCompetenciasDisponibles(comps);
       setFormulario((prev) => ({ ...prev, competencia: comps[0] || "", capacidades: [] }));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formulario.area]);
 
   useEffect(() => {
@@ -39,31 +43,86 @@ export default function AppPage() {
       const caps = COMPETENCIAS_CAPACIDADES[formulario.area]?.[formulario.competencia] || [];
       setCapacidadesDisponibles(caps);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formulario.competencia]);
 
-  const fetchWithTimeout = async (url: string, options: any, timeout = 60000) => {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeout);
+  // ==== UTIL: combinar señales de aborto de forma segura ====
+  function combineSignals(signalA?: AbortSignal, signalB?: AbortSignal) {
+    if (!signalA) return signalB;
+    if (!signalB) return signalA;
+
+    const anyFn = (AbortSignal as any).any;
+    if (typeof anyFn === "function") {
+      return anyFn([signalA, signalB]);
+    }
+
+    const combo = new AbortController();
+    const onAbortA = () => combo.abort((signalA as any).reason ?? "upstream-abort-A");
+    const onAbortB = () => combo.abort((signalB as any).reason ?? "upstream-abort-B");
+
+    if (signalA.aborted) combo.abort((signalA as any).reason ?? "upstream-abort-A");
+    if (signalB.aborted) combo.abort((signalB as any).reason ?? "upstream-abort-B");
+
+    signalA.addEventListener("abort", onAbortA);
+    signalB.addEventListener("abort", onAbortB);
+
+    (combo as any)._cleanup = () => {
+      signalA.removeEventListener("abort", onAbortA);
+      signalB.removeEventListener("abort", onAbortB);
+    };
+
+    return combo.signal;
+  }
+
+  // ==== UTIL: fetch con timeout robusto y motivo claro ====
+  const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeout = 60_000) => {
+    const localController = new AbortController();
+    const localSignal = localController.signal;
+    const combinedSignal = combineSignals(options.signal as AbortSignal | undefined, localSignal);
+
+    const timeoutId = setTimeout(() => {
+      try {
+        (localController as any).abort?.("timeout");
+        if (!localController.signal.aborted) localController.abort();
+      } catch {}
+    }, timeout);
 
     try {
-      const response = await fetch(url, {
-        ...options,
-        signal: controller.signal,
-      });
+      const res = await fetch(url, { ...options, signal: combinedSignal });
+      return res;
+    } catch (err: any) {
+      if (err?.name === "AbortError" || err?.message?.includes("aborted")) {
+        throw new Error(`La solicitud se canceló por timeout (${timeout} ms).`);
+      }
+      throw err;
+    } finally {
       clearTimeout(timeoutId);
-      return response;
-    } catch (error) {
-      clearTimeout(timeoutId);
-      throw error;
+      const cleanup = (localController as any)._cleanup;
+      if (typeof cleanup === "function") cleanup();
     }
   };
 
+  // ==== UTIL: parseo seguro (JSON o texto) ====
+  async function safeParse(res: Response) {
+    const text = await res.text();
+    if (!text) return null;
+    try {
+      return JSON.parse(text);
+    } catch {
+      return text;
+    }
+  }
+
+  // ==== SUBMIT ====
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting.current) return; // evita doble submit
+    isSubmitting.current = true;
+
     setError("");
     setJsonGenerado(null);
+    setLoading(true);
 
-    setLoading(true); // ← añadido (inicio overlay)
     try {
       const res = await fetchWithTimeout(
         "/api/generar",
@@ -72,54 +131,36 @@ export default function AppPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ datos: formulario, provider: formulario.provider }),
         },
-        60000
+        90_000 // ajusta si tu backend tarda más
       );
 
-      const rawText = await res.text();
+      const payload = await safeParse(res);
 
-      if (!rawText.trim()) throw new Error("Respuesta vacía del servidor");
-      if (rawText.length > 10_000_000) throw new Error("Respuesta demasiado grande");
-
-      let data;
-      try {
-        data = JSON.parse(rawText);
-      } catch {
-        const match = rawText.match(/\{[\s\S]*\}/);
-        if (match) {
-          try {
-            data = JSON.parse(match[0]);
-          } catch {
-            throw new Error("Error al parsear JSON parcial");
-          }
-        } else {
-          throw new Error("La respuesta no contiene JSON válido");
-        }
+      if (!res.ok) {
+        const msg = typeof payload === "string" ? payload : JSON.stringify(payload);
+        throw new Error(`Error ${res.status}: ${msg || "Falla en /api/generar"}`);
       }
 
-      if (!data.success && !data.data) {
-        throw new Error(data.error || "Error inesperado del servidor");
-      }
-
-      setJsonGenerado(data.data || data.resultado);
+      setJsonGenerado(payload);
     } catch (err: any) {
-      setError("Error crítico: " + err.message);
-      console.error("❌ Error crítico en handleSubmit:", err);
+      setError(err?.message || "Error desconocido al generar la sesión");
+      console.error("❌ handleSubmit error:", err);
     } finally {
-      setLoading(false); // ← añadido (fin overlay)
+      setLoading(false);
+      isSubmitting.current = false;
     }
   };
 
+  // ==== DESCARGA WORD ====
   const descargarWord = async () => {
     if (!jsonGenerado) return;
     setDescargando(true);
-
     try {
       const res = await fetch("/api/exportarWord", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(jsonGenerado),
       });
-
       if (!res.ok) throw new Error("Error al generar el Word");
 
       const blob = await res.blob();
@@ -138,7 +179,6 @@ export default function AppPage() {
 
   return (
     <>
-      {/* Overlay global mientras genera */}
       <LoadingOverlay show={loading} />
 
       <div
@@ -269,9 +309,9 @@ export default function AppPage() {
             <button
               className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
               type="submit"
-              disabled={loading} // ← añadido
+              disabled={loading || isSubmitting.current}
             >
-              {loading ? "Generando…" : "Generar sesión" /* ← añadido */}
+              {loading ? "Generando…" : "Generar sesión"}
             </button>
           </form>
 

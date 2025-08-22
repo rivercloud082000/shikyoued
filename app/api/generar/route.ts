@@ -3,8 +3,9 @@ import { jsonrepair } from "jsonrepair";
 import { buildUserPrompt, SYSTEM } from "@/lib/ai/prompts";
 import { generateSessionJSON } from "@/lib/ai/providers";
 
-// 🔍 Función para inferir el ciclo según nivel y grado
-// ✅ MINEDU: Primaria (III, IV, V) / Secundaria (VI, VII)
+// === Utilidades auxiliares ===
+
+// Normaliza nivel para inferir ciclo
 function normalizeNivel(nivel: string = ""): "primaria" | "secundaria" | "" {
   const n = (nivel || "").toLowerCase().trim();
   if (n.startsWith("pri")) return "primaria";
@@ -14,7 +15,7 @@ function normalizeNivel(nivel: string = ""): "primaria" | "secundaria" | "" {
 
 function parseGrado(grado: string = ""): number {
   const m = (grado || "").toLowerCase().match(/\d+/);
-  return m ? parseInt(m[0], 10) : NaN; // "3", "3°", "3ero" -> 3
+  return m ? parseInt(m[0], 10) : NaN;
 }
 
 function inferirCiclo(nivel: string = "", grado: string = ""): string {
@@ -27,16 +28,14 @@ function inferirCiclo(nivel: string = "", grado: string = ""): string {
     if (g <= 4) return "IV";
     return "V"; // 5°–6°
   }
-
   if (n === "secundaria") {
     if (g <= 2) return "VI";
     return "VII"; // 3°–5°
   }
-
   return "";
 }
 
-// 🔄 Convierte strings o arrays en array limpio
+// Convierte strings/arrays en array limpio
 function convertirAArray(input: string | string[]): string[] {
   if (Array.isArray(input)) return input;
   if (typeof input === "string") {
@@ -48,175 +47,182 @@ function convertirAArray(input: string | string[]): string[] {
   return [];
 }
 
+// Timeout de promesas (si el provider se demora demasiado)
+async function withTimeout<T>(p: Promise<T>, ms: number, label = "operación"): Promise<T> {
+  let t: NodeJS.Timeout;
+  const timeout = new Promise<never>((_, rej) =>
+    (t = setTimeout(() => rej(new Error(`${label} superó ${ms} ms`)), ms))
+  );
+  try {
+    // @ts-ignore
+    return await Promise.race([p, timeout]);
+  } finally {
+    clearTimeout(t!);
+  }
+}
+
+// Limpieza fuerte de texto antes del parseo
+function cleanRaw(raw: any): string {
+  return String(raw)
+    .replace(/^\uFEFF/, "")                // BOM
+    .replace(/```(?:json)?/gi, "")         // fences
+    .replace(/```/g, "")
+    .replace(/[“”‘’]/g, '"')
+    .replace(/\u0000/g, "")
+    .replace(/\\u[\da-f]{0,3}[^a-f0-9]/gi, "")
+    .trim();
+}
+
+// Extrae el primer objeto {…} balanceado
+function extractBalancedJson(s: string): string | null {
+  let depth = 0, start = -1, inStr = false, esc = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (inStr) {
+      if (esc) { esc = false; continue; }
+      if (ch === "\\") { esc = true; continue; }
+      if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') { inStr = true; continue; }
+    if (ch === "{") { if (depth === 0) start = i; depth++; }
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0 && start !== -1) return s.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
 export async function POST(req: NextRequest) {
   try {
-    // ⛔️ SIN AUTENTICACIÓN: eliminamos getServerSession y el 401
-
-    // 📥 Procesa el body
+    // --- Validación de body ---
     const body = await req.json().catch(() => null);
     if (!body) {
+      return NextResponse.json({ success: false, error: "JSON inválido" }, { status: 400 });
+    }
+
+    // Evitar payloads gigantes que saturen el provider
+    const rawLen = JSON.stringify(body).length;
+    if (rawLen > 2_000_000) {
       return NextResponse.json(
-        { success: false, error: "JSON inválido" },
-        { status: 400 }
+        { success: false, error: "Payload demasiado grande" },
+        { status: 413 }
       );
     }
 
-    const provider = (body.provider ?? "ollama-mistral") as
-      | "ollama-mistral"
-      | "cohere";
+    // Provider permitido
+    const provider = (body.provider ?? "ollama-mistral") as "ollama-mistral" | "cohere";
+    const allowed = new Set<"ollama-mistral" | "cohere">(["ollama-mistral", "cohere"]);
+    const safeProvider = allowed.has(provider) ? provider : "ollama-mistral";
 
-    // ---------------------------
-    // ✅ Server = verdad (CICLO)
-    // ---------------------------
+    // --- Datos base (server como fuente de verdad para ciclo) ---
     const datos = body.datos ?? {};
     const nivel = String(datos.nivel ?? "");
     const grado = String(datos.grado ?? "");
-    const ciclo = inferirCiclo(nivel, grado); // ← cálculo oficial
+    const ciclo = inferirCiclo(nivel, grado);
 
-    // Forzamos que el backend mande el ciclo correcto
     const datosServer = { ...datos, nivel, grado, ciclo };
 
     const tituloSesion = datosServer.tituloSesion ?? "Sesión sin título";
     const contextoPersonalizado = body.contextoSecuencia ?? "";
     const capacidadesManuales = convertirAArray(datosServer.capacidades ?? []);
 
-    // ✏️ Construye el prompt usando SIEMPRE datosServer
+    // --- Prompt final (usa SIEMPRE datosServer) ---
     const prompt = buildUserPrompt({
-      datos: datosServer, // ← acá ya va el ciclo correcto
+      datos: datosServer,
       tituloSesion,
       contextoPersonalizado,
       capacidadesSeleccionadas: capacidadesManuales,
     });
 
-    // 🤖 Llama a la IA
-    const raw = await generateSessionJSON({
-      provider,
-      system: SYSTEM,
-      prompt,
-      temperature: 0.2,
-    });
+    // --- Llamada a IA con timeout de servidor ---
+    const raw = await withTimeout(
+      generateSessionJSON({
+        provider: safeProvider,
+        system: SYSTEM,
+        prompt,
+        temperature: 0.2,
+      }),
+      80_000, // ajusta si lo necesitas
+      "generación de sesión"
+    );
 
-    // 🧹 Limpieza del texto (UNA sola vez)
-    let cleaned = String(raw)
-      .replace(/\\u[\da-f]{0,3}[^a-f0-9]/gi, "")
-      .replace(/[“”‘’]/g, '"')
-      .replace(/\u0000/g, "")
-      .trim();
+    // --- Limpieza y parseo robusto ---
+    let cleaned = cleanRaw(raw);
 
-    // 🧪 Parse robusto del JSON
+    // 1) JSON.parse directo
     let data: any = null;
+    try { data = JSON.parse(cleaned); } catch {}
 
-    const tryParse = (txt: string) => {
-      try {
-        return JSON.parse(txt);
-      } catch {
-        return null;
-      }
-    };
-
-    // 1) Intento directo
-    data = tryParse(cleaned);
-
-    // 2) Si falla, intenta extraer el primer objeto balanceado { ... }
+    // 2) Extraer objeto balanceado
     if (!data) {
-      const extractBalancedJson = (s: string) => {
-        let depth = 0,
-          start = -1,
-          inStr = false,
-          esc = false;
-        for (let i = 0; i < s.length; i++) {
-          const ch = s[i];
-          if (inStr) {
-            if (esc) {
-              esc = false;
-              continue;
-            }
-            if (ch === "\\") {
-              esc = true;
-              continue;
-            }
-            if (ch === '"') inStr = false;
-            continue;
-          }
-          if (ch === '"') {
-            inStr = true;
-            continue;
-          }
-          if (ch === "{") {
-            if (depth === 0) start = i;
-            depth++;
-          } else if (ch === "}") {
-            depth--;
-            if (depth === 0 && start !== -1) return s.slice(start, i + 1);
-          }
-        }
-        return null;
-      };
-
       const balanced = extractBalancedJson(cleaned);
-      if (balanced) data = tryParse(balanced);
+      if (balanced) {
+        try { data = JSON.parse(balanced); } catch {}
+      }
     }
 
-    // 3) Si aún falla, intenta reparar
+    // 3) Reparar con jsonrepair
     if (!data) {
       try {
         const repaired = jsonrepair(cleaned);
-        data = tryParse(repaired);
+        data = JSON.parse(repaired);
       } catch {
         // noop
       }
     }
 
-    // 4) Si también falla, responde error con muestra
     if (!data) {
       return NextResponse.json(
-        {
-          success: false,
-          error: "La IA no devolvió JSON válido",
-          sample: cleaned.slice(0, 800),
-        },
+        { success: false, error: "La IA no devolvió JSON válido", sample: cleaned.slice(0, 800) },
         { status: 502 }
       );
     }
 
-    // --------------------------------------------
-    // 🎯 Refuerzo post-IA: forzar ciclo correcto
-    // --------------------------------------------
+    // --- Refuerzo post-IA: ciclo correcto y saneado ---
     data.datos = data.datos || {};
-    // conserva nivel/grado de la IA si los trajo, si no usa los del server
     data.datos.nivel = String(data.datos.nivel ?? nivel ?? "");
     data.datos.grado = String(data.datos.grado ?? grado ?? "");
     data.datos.ciclo = inferirCiclo(data.datos.nivel, data.datos.grado);
 
-    // ➕ Unifica capacidades generadas y manuales
+    // Unificar capacidades (IA + manuales)
     if (Array.isArray(data.datos?.capacidades)) {
-      data.datos.capacidades = [
-        ...new Set([...data.datos.capacidades, ...capacidadesManuales]),
-      ];
+      data.datos.capacidades = [...new Set([...data.datos.capacidades, ...capacidadesManuales])];
     } else {
       data.datos.capacidades = capacidadesManuales;
     }
+    data.datos.capacidades = convertirAArray(data.datos.capacidades);
 
-    // 🧱 Asegura que los campos de la fila estén limpios
+    // Saneado de la primera fila (si existe)
     const fila = data.filas?.[0];
     if (fila) {
       fila.recursosDidacticos = convertirAArray(fila.recursosDidacticos);
       fila.instrumento = convertirAArray(fila.instrumento);
       fila.criteriosEvaluacion = convertirAArray(fila.criteriosEvaluacion);
       fila.evidenciaAprendizaje = convertirAArray(fila.evidenciaAprendizaje);
-      data.datos.capacidades = convertirAArray(data.datos.capacidades);
 
       if (!fila.tituloSesion && tituloSesion) {
         fila.tituloSesion = tituloSesion;
       }
     }
 
-    return NextResponse.json({ success: true, data });
+    return NextResponse.json(
+      { success: true, data },
+      {
+        headers: {
+          "Cache-Control": "no-store, max-age=0",
+        },
+      }
+    );
   } catch (error: any) {
     console.error("❌ Error en /api/generar:", error);
+    const status =
+      /superó \d+ ms/.test(error?.message || "") ? 504 : 500;
+
     return NextResponse.json(
-      { success: false, error: error.message || "Error desconocido" },
-      { status: 500 }
+      { success: false, error: error?.message || "Error desconocido" },
+      { status }
     );
   }
 }
