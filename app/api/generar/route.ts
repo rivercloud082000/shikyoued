@@ -144,7 +144,7 @@ export async function POST(req: NextRequest) {
         prompt,
         temperature: 0.2,
       }),
-      80_000, // ajusta si lo necesitas
+      180_000, // ajusta si lo necesitas
       "generación de sesión"
     );
 

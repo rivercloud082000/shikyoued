@@ -75,7 +75,7 @@ export default function AppPage() {
   }
 
   // ==== UTIL: fetch con timeout robusto y motivo claro ====
-  const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeout = 60_000) => {
+  const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeout = 180_000) => {
     const localController = new AbortController();
     const localSignal = localController.signal;
     const combinedSignal = combineSignals(options.signal as AbortSignal | undefined, localSignal);
@@ -131,7 +131,7 @@ export default function AppPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ datos: formulario, provider: formulario.provider }),
         },
-        90_000 // ajusta si tu backend tarda más
+        190_000 // ajusta si tu backend tarda más
       );
 
       const payload = await safeParse(res);
