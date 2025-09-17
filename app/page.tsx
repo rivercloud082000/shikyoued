@@ -26,9 +26,14 @@ export default function Home() {
 
       {/* 🔹 Título en la parte superior, centrado */}
       <div className="pt-6 text-center">
-        <h1 className="text-4xl font-extrabold text-white drop-shadow-lg animate-pulse">
-          Bienvenido a ShikyuoEd
-        </h1>
+        <Image
+         src="/sestia.jpeg"
+         alt="SestIA Blossom – Generador Educativo"
+          width={430} // ajusta el tamaño según quieras
+          height={130}
+          className="mx-auto drop-shadow-lg animate-pulse"
+/>
+
       </div>
 
       {/* 🔹 Caja central con el acceso directo */}
@@ -99,8 +104,8 @@ export default function Home() {
   {/* Autor */}
 
   <div className="text-xs text-white/80">
-    Creado por{" "}
-    <strong className="text-blue-300">Adrian Jesus Perez Huampuque</strong>
+    Desarrolado por {" "}
+    <strong className="text-blue-300">ERES</strong>
   </div>
 </div>
     </main>
