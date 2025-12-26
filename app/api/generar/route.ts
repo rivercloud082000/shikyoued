@@ -125,7 +125,11 @@ export async function POST(req: NextRequest) {
     const datosServer = { ...datos, nivel, grado, ciclo };
 
     const tituloSesion = datosServer.tituloSesion ?? "Sesión sin título";
-    const contextoPersonalizado = body.contextoSecuencia ?? "";
+    const enfoque = String(datosServer.enfoque ?? "MINEDU");
+    const contextoPersonalizado =
+   (body.contextoSecuencia ? String(body.contextoSecuencia) : "") +
+   `\n\nENFOQUE_PEDAGOGICO: ${enfoque}. Mantén la estructura MINEDU; ajusta SOLO actividades y lenguaje según el enfoque.\n`;
+
     const capacidadesManuales = convertirAArray(datosServer.capacidades ?? []);
 
     // --- Prompt final (usa SIEMPRE datosServer) ---
@@ -186,13 +190,10 @@ export async function POST(req: NextRequest) {
     data.datos.grado = String(data.datos.grado ?? grado ?? "");
     data.datos.ciclo = inferirCiclo(data.datos.nivel, data.datos.grado);
 
-    // Unificar capacidades (IA + manuales)
-    if (Array.isArray(data.datos?.capacidades)) {
-      data.datos.capacidades = [...new Set([...data.datos.capacidades, ...capacidadesManuales])];
-    } else {
-      data.datos.capacidades = capacidadesManuales;
-    }
-    data.datos.capacidades = convertirAArray(data.datos.capacidades);
+    // ✅ FIX FINAL: respetar SOLO las capacidades seleccionadas por el docente
+    data.datos.capacidades = convertirAArray(capacidadesManuales);
+
+
 
     // Saneado de la primera fila (si existe)
     const fila = data.filas?.[0];

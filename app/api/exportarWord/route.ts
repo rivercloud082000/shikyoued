@@ -108,6 +108,12 @@ function buildTemplateData(dataPlano: Record<string, string>) {
     CRITERIOS: d.criteriosEvaluacion,
     INSTRUMENTO: d.instrumento,
     EVIDENCIA: d.evidenciaAprendizaje,
+
+     PIE_SESTIA: "Documento generado automáticamente mediante SestIA – ERES",
+     pie_sestia: "Documento generado automáticamente mediante SestIA – ERES",
+
+
+
   };
 }
 

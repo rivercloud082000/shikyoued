@@ -31,33 +31,56 @@ export default function Home() {
          alt="SestIA Blossom – Generador Educativo"
           width={430} // ajusta el tamaño según quieras
           height={130}
-          className="mx-auto drop-shadow-lg animate-pulse"
+          className="mx-auto drop-shadow-[0_12px_35px_rgba(0,0,0,0.35)] animate-pulse rounded-2xl"
+style={{
+  mixBlendMode: "multiply",
+  filter: "drop-shadow(0 18px 28px rgba(0,0,0,.25))",
+}}
+
 />
 
       </div>
 
       {/* 🔹 Caja central con el acceso directo */}
-      <div className="flex-1 flex items-center justify-center w-full">
-        <div className="bg-black bg-opacity-60 p-8 rounded-xl shadow-xl text-center max-w-xl">
-          <p className="mb-6 text-lg text-white">
-            Tu generador de sesiones de aprendizaje.
-          </p>
+<div className="flex-1 flex items-center justify-center w-full px-4">
+  <div
+    className="
+      relative
+      w-full
+      max-w-lg
+      rounded-2xl
+      text-center
+      backdrop-blur-2xl
+      bg-gradient-to-br
+      from-emerald-400/20
+      via-cyan-400/15
+      to-blue-500/20
+      border border-white/25
+      shadow-[0_25px_60px_rgba(0,0,0,0.35)]
+      p-6
+    "
+  >
+    <div className="rounded-2xl bg-black/35 backdrop-blur-md border border-white/10 px-6 py-6">
+      <p className="mb-6 text-lg md:text-xl text-white/90 drop-shadow">
+        Crea sesiones en segundos, listas para exportar y usar en clase.
+      </p>
 
-          {/* Botón para ir directamente a la app */}
-          <Link
-            href="/app" /* <-- ajusta si es otra ruta */
-            className="inline-block px-8 py-3 font-bold text-lg rounded-full transition-transform duration-300 hover:scale-105
-                       bg-white text-black shadow-[0_0_20px_rgba(255,255,255,0.15)]"
-          >
-            Ir a la app
-          </Link>
+      <Link
+        href="/app"
+        className="inline-flex items-center justify-center px-9 py-3 font-extrabold text-base md:text-lg
+                   rounded-full transition-all duration-300 hover:scale-[1.03]
+                   bg-white text-black shadow-[0_0_25px_rgba(255,255,255,0.18)]"
+      >
+        Ir a la app →
+      </Link>
 
-          {/* Nota pequeña bajo el botón */}
-          <p className="mt-4 text-xs text-white/70">
-            Acceso libre sin autenticación.
-          </p>
-        </div>
-      </div>
+      <p className="mt-4 text-xs text-white/70">
+        Diseño futurista · Rápido · Profesional
+      </p>
+    </div>
+  </div>
+</div>
+
 
       {/* 🔹 Bloque de contacto y autor: lo más abajo y a la derecha */}
       {/* Footer fijo en la esquina inferior derecha */}
@@ -95,7 +118,9 @@ export default function Home() {
     📧{" "}
     <a
       href="mailto:huampuque2000@gmail.com"
-      className="underline text-blue-300"
+      className="underline text-slate-500 hover:text-slate-300 transition"
+
+
     >
       huampuque2000@gmail.com
     </a>
@@ -103,11 +128,14 @@ export default function Home() {
 
   {/* Autor */}
 
-  <div className="text-xs text-white/80">
-    Desarrolado por {" "}
-    <strong className="text-blue-300">ERES</strong>
-  </div>
+  <div className="text-xs text-slate-500">
+  Desarrollado por{" "}
+  <strong className="text-black font-semibold">ERES</strong>
 </div>
+
+  </div>
     </main>
   );
 }
+
+
