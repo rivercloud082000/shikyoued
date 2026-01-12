@@ -4,6 +4,19 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { COMPETENCIAS_CAPACIDADES } from "../../lib/competencias-capacidades";
 import LoadingOverlay from "../../components/LoadingOverlay";
 
+
+const LABEL_INSTRUMENTO: Record<string, string> = {
+  lista_cotejo: "Lista de cotejo",
+  rubrica_analitica: "Rúbrica analítica",
+  guia_observacion: "Guía de observación",
+  escala_valoracion: "Escala de valoración",
+  registro_anecdotico: "Registro anecdótico",
+  diario_campo: "Diario de campo",
+  lista_verificacion: "Lista de verificación",
+  ficha_seguimiento: "Ficha de seguimiento",
+};
+
+
 type Escala = "Sí" | "No" | "En proceso";
 
 type Enfoque =
@@ -27,6 +40,9 @@ type Instrumentos = {
     };
   }[];
 };
+
+const MIN_CRITERIOS_INSTRUMENTO = 5;
+const MAX_CRITERIOS_INSTRUMENTO = 8;
 
 function getDataFromPayload(payload: any) {
   // Soporta: {success:true,data:{...}} o data directo
@@ -61,34 +77,104 @@ function inferirCriteriosFallback(payload: any) {
   const fila0 = getFila0(payload) ?? {};
   const proposito = (fila0?.propositoAprendizaje ?? "").trim();
   const evidencias = uniq((fila0?.evidenciaAprendizaje ?? []) as string[]);
-  const base = [
-    proposito ? `Logra el propósito de aprendizaje planteado.` : "",
-    evidencias[0] ? `Evidencia: ${evidencias[0]}` : "",
-    evidencias[1] ? `Evidencia: ${evidencias[1]}` : "",
-    "Participa activamente, respeta consignas y comunica sus ideas.",
+
+  // 🔹 Candidatos iniciales
+  const base: string[] = [
+    proposito ? "Logra el propósito de aprendizaje planteado." : "",
+    evidencias[0]
+      ? `Resuelve adecuadamente la evidencia: ${evidencias[0]}.`
+      : "",
+    evidencias[1]
+      ? `Resuelve adecuadamente la evidencia: ${evidencias[1]}.`
+      : "",
+    "Participa activamente, respeta consignas y trabaja colaborativamente.",
+  ].filter(Boolean);
+
+  // 🔹 Plantillas extra para completar si faltan
+  const extras = [
+    "Explica su procedimiento o estrategia al resolver los ejercicios.",
+    "Justifica sus respuestas con argumentos claros.",
+    "Maneja los recursos y materiales de forma responsable.",
+    "Reflexiona sobre sus errores y corrige sus procedimientos.",
   ];
-  return uniq(base).slice(0, 4);
+
+  let criterios = uniq(base);
+
+  // 🔹 Mínimo y máximo de criterios
+  const MIN = 4;
+  const MAX = 8;
+
+  for (let i = 0; criterios.length < MIN && i < extras.length; i++) {
+    criterios.push(extras[i]);
+    criterios = uniq(criterios);
+  }
+
+  // devolvemos entre 4 y 8 criterios
+  return criterios.slice(0, MAX);
 }
+
+
+// Expande los criterios a un rango controlado (min–max)
+// Expande los criterios a un rango controlado (min–max)
+function expandirCriteriosBase(
+  base: string[],
+  fila0: any,
+  min = MIN_CRITERIOS_INSTRUMENTO,
+  max = MAX_CRITERIOS_INSTRUMENTO
+): string[] {
+  const limpios = uniq(base);
+  const tema =
+    (fila0?.tituloSesion ??
+      fila0?.tema ??
+      "el tema de la sesión").toLowerCase();
+
+  const extrasPosibles = [
+    `Explica con claridad los pasos seguidos en la resolución de actividades sobre ${tema}.`,
+    `Relaciona los contenidos de ${tema} con situaciones de la vida cotidiana.`,
+    `Revisa y corrige sus procedimientos cuando encuentra errores en ${tema}.`,
+    `Trabaja de forma ordenada y cuidadosa durante las actividades relacionadas con ${tema}.`,
+    `Argumenta sus respuestas utilizando el vocabulario propio de ${tema}.`,
+    `Muestra disposición para colaborar y apoyar a sus compañeros en tareas de ${tema}.`,
+  ];
+
+  const out: string[] = [...limpios];
+
+  // Rellenar si hay menos del mínimo
+  let i = 0;
+  while (out.length < min && i < extrasPosibles.length) {
+    out.push(extrasPosibles[i++]);
+  }
+
+  // Recortar si se pasa del máximo
+  return out.slice(0, Math.min(max, out.length));
+}
+
 
 function generarInstrumentosDesdeSesion(payload: any): Instrumentos {
   const fila0 = getFila0(payload) ?? {};
   const criterios = uniq((fila0?.criteriosEvaluacion ?? []) as string[]);
-  const base = criterios.length ? criterios : inferirCriteriosFallback(payload);
+  const baseInicial = criterios.length
+    ? criterios
+    : inferirCriteriosFallback(payload);
 
-  const listaCotejo = base.slice(0, 6).map((c) => ({
+  // 🔹 ahora base tiene entre 5 y 8 criterios
+  const base = expandirCriteriosBase(baseInicial, fila0);
+
+
+  const listaCotejo = base.map((c) => ({
     criterio: c,
     escala: ["Sí", "No", "En proceso"] as Escala[],
-
-
   }));
 
-  const rubrica = base.slice(0, 6).map((c) => ({
+  const rubrica = base.map((c) => ({
     criterio: c,
     niveles: construirNivelesRubrica(c),
   }));
 
   return { listaCotejo, rubrica };
 }
+
+
 
 function normalizarKey(s: string) {
   return (s || "")
@@ -187,6 +273,8 @@ export default function AppPage() {
     capacidades: [] as string[],
     provider: "cohere",
     enfoque: "MINEDU" as Enfoque,
+      tipoInstrumento: "lista_cotejo",
+
   });
 
   const [competenciasDisponibles, setCompetenciasDisponibles] = useState<string[]>([]);
@@ -205,6 +293,9 @@ export default function AppPage() {
 
   // JSON toggle
   const [showJSON, setShowJSON] = useState(false);
+  // JSON instrumento
+const [showInstrJSON, setShowInstrJSON] = useState(false);
+
 
   // evitar doble submit
   const isSubmitting = useRef(false);
@@ -306,11 +397,13 @@ export default function AppPage() {
     if (isSubmitting.current) return;
     isSubmitting.current = true;
 
-    setError("");
+        setError("");
     setJsonGenerado(null);
     setInstrumentos(null); // clave: no mezclar
     setShowJSON(false);
+    setShowInstrJSON(false);
     setLoading(true);
+
 
     try {
       const res = await fetchWithTimeout(
@@ -331,6 +424,13 @@ export default function AppPage() {
       }
 
       setJsonGenerado(payload);
+      try {
+  const inst = generarInstrumentosDesdeSesion(payload);
+  setInstrumentos(inst);
+} catch (e) {
+  console.error("❌ Error al generar instrumentos desde la sesión:", e);
+}
+
     } catch (err: any) {
       setError(err?.message || "Error desconocido al generar la sesión");
       console.error("❌ handleSubmit error:", err);
@@ -398,6 +498,7 @@ export default function AppPage() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        // 👇 meta para rellenar cabecera de la plantilla
         meta: {
           tituloSesion: fila0?.tituloSesion ?? datos?.tituloSesion ?? "",
           area: fila0?.area ?? datos?.area ?? "",
@@ -405,8 +506,13 @@ export default function AppPage() {
           nivel: datos?.nivel ?? "",
           grado: datos?.grado ?? "",
           docente: datos?.docente ?? "",
+          // opcional pero útil por consistencia:
+          tipoInstrumento: formulario.tipoInstrumento,
         },
+        // 👇 instrumentos generados por reglas locales
         instrumentos,
+        // 👇 clave principal que usa el backend para elegir la plantilla
+        tipoInstrumento: formulario.tipoInstrumento,
       }),
     });
 
@@ -428,6 +534,7 @@ export default function AppPage() {
     setDescargandoInstrWord(false);
   }
 };
+
 
 
   const dataOnly = useMemo(() => getDataFromPayload(jsonGenerado), [jsonGenerado]);
@@ -542,6 +649,24 @@ export default function AppPage() {
             </select>
 
             <select
+  className={ui.select}
+  value={formulario.tipoInstrumento}
+  onChange={(e) =>
+    setFormulario({ ...formulario, tipoInstrumento: e.target.value })
+  }
+>
+  <option value="lista_cotejo">Lista de cotejo</option>
+  <option value="rubrica_analitica">Rúbrica analítica</option>
+  <option value="guia_observacion">Guía de observación</option>
+  <option value="escala_valoracion">Escala de valoración</option>
+  <option value="registro_anecdotico">Registro anecdótico</option>
+  <option value="diario_campo">Diario de campo</option>
+  <option value="lista_verificacion">Lista de verificación</option>
+  <option value="ficha_seguimiento">Ficha de seguimiento</option>
+</select>
+
+
+            <select
               className={ui.select}
 
 
@@ -627,74 +752,92 @@ export default function AppPage() {
 
   <button
     type="button"
-    onClick={generarInstrumentos}
-    disabled={!jsonGenerado || loadingInstr}
-    className={`${ui.btnBase} ${ui.btnPurple}`}
+    onClick={descargarWord}
+    disabled={!jsonGenerado || descargando}
+    className={`${ui.btnBase} ${ui.btnGreen}`}
   >
-    {loadingInstr ? "Creando instrumentos…" : "Generar instrumentos"}
+    {descargando ? "Descargando..." : "Descargar Word (Sesión)"}
   </button>
 
   <button
     type="button"
     onClick={descargarWordInstrumentos}
     disabled={!instrumentos || descargandoInstrWord}
-    className={`${ui.btnBase} ${ui.btnGreen}`}
+    className={`${ui.btnBase} ${ui.btnPurple}`}
   >
-    {descargandoInstrWord ? "Descargando..." : "Descargar Instrumentos (Word)"}
-  </button>
-
-  <button
-    type="button"
-    onClick={descargarWord}
-    disabled={!jsonGenerado || descargando}
-    className={`${ui.btnBase} ${ui.btnGreen}`}
-  >
-    {descargando ? "Descargando..." : "Descargar Word"}
+    {descargandoInstrWord ? "Descargando..." : "Descargar Instrumento (Word)"}
   </button>
 </div>
+
 
           </form>
 
           {error && <p className="text-red-600 mt-4">{error}</p>}
 
-          {jsonGenerado && (
-  <div className={ui.section}>
-    <div className="flex items-center justify-between">
-      <h3 className={ui.sectionTitle}>Sesión generada</h3>
+                    {jsonGenerado && (
+            <div className={ui.section}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className={ui.sectionTitle}>Sesión generada</h3>
 
-      <button
-        type="button"
-        onClick={() => setShowJSON((v) => !v)}
-        className="text-sm text-white/90 underline hover:text-white"
-      >
-        {showJSON ? "Ocultar JSON" : "Ver detalles (JSON)"}
-      </button>
-    </div>
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowJSON((v) => !v)}
+                    className="text-sm text-white/90 underline hover:text-white"
+                  >
+                    {showJSON ? "Ocultar JSON sesión" : "Ver JSON (sesión)"}
+                  </button>
 
-    <p className={ui.sectionText}>
-      <b>Nivel inferido:</b> {dataOnly?.datos?.nivel ?? ""}
+                  {instrumentos && (
+                    <button
+                      type="button"
+                      onClick={() => setShowInstrJSON((v) => !v)}
+                      className="text-sm text-white/90 underline hover:text-white"
+                    >
+                      {showInstrJSON
+                        ? "Ocultar JSON instrumento"
+                        : "Ver JSON (instrumento)"}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <p className={ui.sectionText}>
+                <b>Nivel inferido:</b> {dataOnly?.datos?.nivel ?? ""}
+              </p>
+              <p className={ui.sectionText}>
+                <b>Ciclo inferido:</b> {dataOnly?.datos?.ciclo ?? ""}
+              </p>
+
+              {instrumentos && (
+  <div className="mt-3 rounded-xl border border-white/10 bg-black/25 p-3">
+    <h4 className="text-white font-semibold">
+      Instrumento generado
+    </h4>
+
+    <p className="text-white/80 text-sm">
+      {formulario.tipoInstrumento === "rubrica_analitica"
+        ? `${LABEL_INSTRUMENTO[formulario.tipoInstrumento]}: ${instrumentos.rubrica.length} criterios`
+        : `${LABEL_INSTRUMENTO[formulario.tipoInstrumento] ?? "Instrumento"}: ${instrumentos.listaCotejo.length} criterios base`}
     </p>
-    <p className={ui.sectionText}>
-      <b>Ciclo inferido:</b> {dataOnly?.datos?.ciclo ?? ""}
-    </p>
-
-    {instrumentos && (
-      <div className="mt-3 rounded-xl border border-white/10 bg-black/25 p-3">
-        <h4 className="text-white font-semibold">Instrumentos (por reglas)</h4>
-        <p className="text-white/80 text-sm">
-          Lista de cotejo: {instrumentos.listaCotejo.length} criterios · Rúbrica:{" "}
-          {instrumentos.rubrica.length} criterios
-        </p>
-      </div>
-    )}
-
-    {showJSON && (
-      <pre className={ui.pre}>
-        {JSON.stringify(jsonGenerado, null, 2)}
-      </pre>
-    )}
   </div>
 )}
+
+
+              {showJSON && (
+                <pre className={ui.pre}>
+                  {JSON.stringify(jsonGenerado, null, 2)}
+                </pre>
+              )}
+
+              {showInstrJSON && instrumentos && (
+                <pre className={ui.pre}>
+                  {JSON.stringify(instrumentos, null, 2)}
+                </pre>
+              )}
+            </div>
+          )}
+
 
               </div>
     </div>

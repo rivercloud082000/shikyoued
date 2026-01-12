@@ -9,7 +9,7 @@ datasource db {
 
 enum Role {
   ADMIN
-  TEACHER
+  DOCENTE
 }
 
 model User {
@@ -17,15 +17,17 @@ model User {
   email     String?      @unique
   name      String?
   image     String?
-  role      Role         @default(TEACHER)
+  role      Role         @default(DOCENTE)
   isAllowed Boolean      @default(false)
   createdAt DateTime     @default(now())
   sessions  SessionDoc[]
+  /// 🔐 Nuevo: hash de la contraseña (nunca guardes la clave plana)
+  passwordHash String?
 }
 
 model Allowlist {
   email     String   @id
-  role      Role     @default(TEACHER)
+  role      Role     @default(DOCENTE)
   createdAt DateTime @default(now())
 }
 

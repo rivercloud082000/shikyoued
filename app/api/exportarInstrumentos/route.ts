@@ -1,139 +1,451 @@
+import { NextResponse } from "next/server";
+import {
+  AlignmentType,
+  Document,
+  Packer,
+  Paragraph,
+  Table,
+  TableCell,
+  TableRow,
+  TextRun,
+  WidthType,
+} from "docx";
+
 export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 
-import { NextRequest } from "next/server";
-import fs from "fs";
-import path from "path";
-import PizZip from "pizzip";
-import Docxtemplater from "docxtemplater";
+/* =======================
+ * Tipos según tu frontend
+ * ======================= */
 
-// =======================
-// helpers
-// =======================
-function listarCotejo(inst: any): string {
-  const items = inst?.listaCotejo ?? [];
-  if (!Array.isArray(items)) return "";
+type Escala = "Sí" | "No" | "En proceso";
 
-  return items
-    .map((x: any, i: number) => {
-      const c = String(x?.criterio ?? "").trim();
-      if (!c) return "";
-      return `${i + 1}. ${c}   [ ] Sí   [ ] No   [ ] En proceso`;
-    })
-    .filter(Boolean)
-    .join("\n");
+type ListaCotejoItem = {
+  criterio: string;
+  escala: Escala[];
+};
+
+type RubricaNiveles = {
+  inicio: string;
+  enProceso: string;
+  logroEsperado: string;
+  destacado: string;
+};
+
+type RubricaItem = {
+  criterio: string;
+  niveles: RubricaNiveles;
+};
+
+type InstrumentosPayload = {
+  listaCotejo: ListaCotejoItem[];
+  rubrica: RubricaItem[];
+};
+
+type Meta = {
+  tituloSesion?: string;
+  area?: string;
+  competencia?: string;
+  nivel?: string;
+  grado?: string;
+  docente?: string;
+  tipoInstrumento?: string;
+};
+
+type RequestBody = {
+  meta?: Meta;
+  instrumentos?: InstrumentosPayload | null;
+  tipoInstrumento?: string; // "lista_cotejo", "rubrica_analitica", etc.
+};
+
+/* =======================
+ * Helpers comunes DOCX
+ * ======================= */
+
+function safeText(value: unknown): string {
+  return String(value ?? "").trim();
 }
 
-function listarRubrica(inst: any): string {
-  const items = inst?.rubrica ?? [];
-  if (!Array.isArray(items)) return "";
-
-  return items
-    .map((r: any, i: number) => {
-      const c = String(r?.criterio ?? "").trim();
-      const n = r?.niveles ?? {};
-      if (!c) return "";
-
-      return [
-        `${i + 1}. ${c}`,
-        `  • Inicio: ${n.inicio ?? ""}`,
-        `  • En proceso: ${n.enProceso ?? ""}`,
-        `  • Logro esperado: ${n.logroEsperado ?? ""}`,
-        `  • Destacado: ${n.destacado ?? ""}`,
-      ].join("\n");
-    })
-    .filter(Boolean)
-    .join("\n\n");
+function titleCenter(text: string) {
+  return new Paragraph({
+    alignment: AlignmentType.CENTER,
+    spacing: { after: 250 },
+    children: [new TextRun({ text, bold: true })],
+  });
 }
 
-function bufferToArrayBuffer(buf: Buffer): ArrayBuffer {
-  const ab = new ArrayBuffer(buf.length);
-  new Uint8Array(ab).set(buf);
-  return ab;
+function metaLine(label: string, value: string, after = 0) {
+  return new Paragraph({
+    spacing: { after },
+    children: [
+      new TextRun({ text: `${label}: `, bold: true }),
+      new TextRun(value || "-"),
+    ],
+  });
 }
 
-// =======================
-// POST
-// =======================
-export async function POST(req: NextRequest) {
+function sectionHeading(text: string) {
+  return new Paragraph({
+    spacing: { before: 200, after: 150 },
+    children: [new TextRun({ text, bold: true })],
+  });
+}
+
+function cell(text: string, bold = false) {
+  return new TableCell({
+    children: [
+      new Paragraph({
+        children: [new TextRun({ text, bold })],
+      }),
+    ],
+  });
+}
+
+function firma() {
+  return new Paragraph({
+    spacing: { before: 300 },
+    children: [
+      new TextRun({ text: "Firma del docente: " }),
+      new TextRun({ text: "____________________________" }),
+    ],
+  });
+}
+
+/* =======================
+ * Etiquetas por tipo
+ * ======================= */
+
+const LABELS: Record<string, string> = {
+  lista_cotejo: "Lista de cotejo",
+  rubrica_analitica: "Rúbrica analítica",
+  guia_observacion: "Guía de observación",
+  escala_valoracion: "Escala de valoración",
+  registro_anecdotico: "Registro anecdótico",
+  diario_campo: "Diario de campo",
+  lista_verificacion: "Lista de verificación",
+  ficha_seguimiento: "Ficha de seguimiento",
+};
+
+type ChecklistMode =
+  | "cotejo"
+  | "verificacion"
+  | "guia"
+  | "ficha"
+  | "registro"
+  | "escala";
+
+function pickMode(key: string): ChecklistMode {
+  switch (key) {
+    case "lista_cotejo":
+      return "cotejo";
+    case "lista_verificacion":
+      return "verificacion";
+    case "escala_valoracion":
+      return "escala";
+    case "registro_anecdotico":
+      return "registro";
+    case "ficha_seguimiento":
+      return "ficha";
+    case "guia_observacion":
+    case "diario_campo":
+    default:
+      return "guia";
+  }
+}
+
+/* =======================
+ * Plantillas
+ * ======================= */
+
+// A) Checklist (lista de cotejo / verificación / guía / escala / etc.)
+function buildChecklistDoc(params: {
+  titulo: string;
+  tipo: string;
+  instrucciones: string;
+  fecha: string;
+  items: { indicador: string; evidencia?: string }[];
+  mode: ChecklistMode;
+}) {
+  const { titulo, tipo, instrucciones, fecha, items, mode } = params;
+
+  const rows: TableRow[] = [];
+
+  if (mode === "cotejo" || mode === "verificacion") {
+    rows.push(
+      new TableRow({
+        children: [
+          cell("N°", true),
+          cell("Indicador", true),
+          cell("Sí", true),
+          cell("No", true),
+          cell("Observaciones", true),
+        ],
+      })
+    );
+
+    items.forEach((it, idx) => {
+      rows.push(
+        new TableRow({
+          children: [
+            cell(String(idx + 1)),
+            cell(safeText(it.indicador) || "-"),
+            cell(""),
+            cell(""),
+            cell(""),
+          ],
+        })
+      );
+    });
+  } else if (mode === "escala") {
+    rows.push(
+      new TableRow({
+        children: [
+          cell("N°", true),
+          cell("Indicador", true),
+          cell("Siempre", true),
+          cell("A veces", true),
+          cell("Nunca", true),
+          cell("Observaciones", true),
+        ],
+      })
+    );
+
+    items.forEach((it, idx) => {
+      rows.push(
+        new TableRow({
+          children: [
+            cell(String(idx + 1)),
+            cell(safeText(it.indicador) || "-"),
+            cell(""),
+            cell(""),
+            cell(""),
+            cell(""),
+          ],
+        })
+      );
+    });
+  } else if (mode === "registro") {
+    rows.push(
+      new TableRow({
+        children: [
+          cell("N°", true),
+          cell("Hecho / situación", true),
+          cell("Descripción", true),
+          cell("Interpretación", true),
+          cell("Acuerdo / acción", true),
+        ],
+      })
+    );
+
+    items.forEach((it, idx) => {
+      rows.push(
+        new TableRow({
+          children: [
+            cell(String(idx + 1)),
+            cell(safeText(it.indicador) || "-"),
+            cell(safeText(it.evidencia) || "-"),
+            cell(""),
+            cell(""),
+          ],
+        })
+      );
+    });
+  } else {
+    // guía / ficha / diario genérico
+    rows.push(
+      new TableRow({
+        children: [
+          cell("N°", true),
+          cell("Indicador (acción observable)", true),
+          cell("Evidencia / cómo se recogerá", true),
+          cell("Observaciones", true),
+        ],
+      })
+    );
+
+    items.forEach((it, idx) => {
+      rows.push(
+        new TableRow({
+          children: [
+            cell(String(idx + 1)),
+            cell(safeText(it.indicador) || "-"),
+            cell(safeText(it.evidencia) || "-"),
+            cell(""),
+          ],
+        })
+      );
+    });
+  }
+
+  const table = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows,
+  });
+
+  return new Document({
+    sections: [
+      {
+        children: [
+          titleCenter("INSTRUMENTO DE EVALUACIÓN"),
+          metaLine("Título del instrumento", titulo),
+          metaLine("Tipo de instrumento", tipo),
+          metaLine("Instrucciones", instrucciones || "-"),
+          metaLine("Fecha", fecha || "-", 200),
+          sectionHeading("Registro / Ítems:"),
+          table,
+          firma(),
+        ],
+      },
+    ],
+  });
+}
+
+// B) Rúbrica analítica
+function buildRubricDoc(params: {
+  titulo: string;
+  tipo: string;
+  instrucciones: string;
+  fecha: string;
+  criterios: {
+    criterio: string;
+    inicio: string;
+    proceso: string;
+    logro: string;
+    destacado: string;
+  }[];
+}) {
+  const { titulo, tipo, instrucciones, fecha, criterios } = params;
+
+  const rows: TableRow[] = [
+    new TableRow({
+      children: [
+        cell("Criterio", true),
+        cell("Inicio", true),
+        cell("Proceso", true),
+        cell("Logro", true),
+        cell("Destacado", true),
+      ],
+    }),
+  ];
+
+  criterios.forEach((c) => {
+    rows.push(
+      new TableRow({
+        children: [
+          cell(safeText(c.criterio) || "-"),
+          cell(safeText(c.inicio) || "-"),
+          cell(safeText(c.proceso) || "-"),
+          cell(safeText(c.logro) || "-"),
+          cell(safeText(c.destacado) || "-"),
+        ],
+      })
+    );
+  });
+
+  const table = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows,
+  });
+
+  return new Document({
+    sections: [
+      {
+        children: [
+          titleCenter("INSTRUMENTO DE EVALUACIÓN"),
+          metaLine("Título del instrumento", titulo),
+          metaLine("Tipo de instrumento", tipo),
+          metaLine("Instrucciones", instrucciones || "-"),
+          metaLine("Fecha", fecha || "-", 200),
+          sectionHeading("Rúbrica (niveles de logro):"),
+          table,
+          firma(),
+        ],
+      },
+    ],
+  });
+}
+
+/* =======================
+ * Route principal
+ * ======================= */
+
+export async function POST(req: Request) {
   try {
-    const body = await req.json().catch(() => null);
-    if (!body) {
-      return new Response("Body inválido", { status: 400 });
-    }
+    const body = (await req.json()) as RequestBody;
 
-    const { meta, instrumentos } = body;
+    const meta = body.meta ?? {};
+    const instrumentos = body.instrumentos;
+    const tipoKey = body.tipoInstrumento ?? meta.tipoInstrumento ?? "lista_cotejo";
+
     if (!instrumentos) {
-      return new Response("No hay instrumentos", { status: 400 });
+      return NextResponse.json(
+        { success: false, error: "Faltan instrumentos para exportar." },
+        { status: 400 }
+      );
     }
 
-    const templatePath = path.resolve("public", "plantilla-instrumentos.docx");
-    if (!fs.existsSync(templatePath)) {
-      return new Response("No existe plantilla-instrumentos.docx", { status: 500 });
+    const tipoLabel = LABELS[tipoKey] ?? "Lista de cotejo";
+
+    const tituloSesion = safeText(meta.tituloSesion) || "Sesión de aprendizaje";
+    const fecha = "";
+
+    let doc: Document;
+
+    if (tipoKey === "rubrica_analitica") {
+      // Usamos tu rubrica local
+      const criterios = (instrumentos.rubrica ?? []).map((r) => ({
+        criterio: safeText(r.criterio),
+        inicio: safeText(r.niveles.inicio),
+        proceso: safeText(r.niveles.enProceso),
+        logro: safeText(r.niveles.logroEsperado),
+        destacado: safeText(r.niveles.destacado),
+      }));
+
+      doc = buildRubricDoc({
+        titulo: `${tipoLabel} – ${tituloSesion}`,
+        tipo: tipoLabel,
+        instrucciones:
+          "Complete la rúbrica según el nivel de logro observado en cada criterio.",
+        fecha,
+        criterios,
+      });
+    } else {
+      // Para todo lo demás usamos la lista de cotejo como base
+      const lista = instrumentos.listaCotejo ?? [];
+
+      const items = lista.map((it) => ({
+        indicador: safeText(it.criterio),
+        evidencia: "",
+      }));
+
+      const mode = pickMode(tipoKey);
+
+      doc = buildChecklistDoc({
+        titulo: `${tipoLabel} – ${tituloSesion}`,
+        tipo: tipoLabel,
+        instrucciones:
+          "Complete según lo observado en las actividades de la sesión.",
+        fecha,
+        items,
+        mode,
+      });
     }
 
-    const content = fs.readFileSync(templatePath, "binary");
-    const zip = new PizZip(content);
+    const buffer = await Packer.toBuffer(doc);
+    const uint8 = new Uint8Array(buffer);
 
-    const doc = new Docxtemplater(zip, {
-      paragraphLoop: true,
-      linebreaks: true,
-      delimiters: { start: "{", end: "}" },
-    });
+    const filename = `Instrumento_${tipoKey || "sesion"}.docx`;
 
-    const lista = Array.isArray(instrumentos?.listaCotejo) ? instrumentos.listaCotejo : [];
-const rub = Array.isArray(instrumentos?.rubrica) ? instrumentos.rubrica : [];
-
-doc.setData({
-  TITULO_SESION: meta?.tituloSesion ?? "",
-  AREA: meta?.area ?? "",
-  COMPETENCIA: meta?.competencia ?? "",
-  NIVEL: meta?.nivel ?? "",
-  GRADO: meta?.grado ?? "",
-  DOCENTE: meta?.docente ?? "",
-
-  // ✅ para loops en tablas
-  LISTA: lista.map((x: any, i: number) => ({
-    n: i + 1,
-    criterio: String(x?.criterio ?? "").trim(),
-  })),
-
-  RUB: rub.map((r: any, i: number) => ({
-    n: i + 1,
-    criterio: String(r?.criterio ?? "").trim(),
-    inicio: String(r?.niveles?.inicio ?? "").trim(),
-    enProceso: String(r?.niveles?.enProceso ?? "").trim(),
-    logro: String(r?.niveles?.logroEsperado ?? "").trim(),
-    destacado: String(r?.niveles?.destacado ?? "").trim(),
-
-    // ✅ puntaje numérico (colegio)
-    pInicio: "1",
-    pEnProceso: "2",
-    pLogro: "3",
-    pDestacado: "4",
-  })),
-
-  PIE_SESTIA: "Documento generado automáticamente mediante SestIA – ERES",
-});
-
-
-    doc.render();
-
-    const buffer = doc.getZip().generate({
-      type: "nodebuffer",
-      compression: "DEFLATE",
-    });
-
-    return new Response(bufferToArrayBuffer(buffer), {
+    return new Response(uint8, {
       status: 200,
       headers: {
         "Content-Type":
           "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "Content-Disposition": "attachment; filename=instrumentos.docx",
-        "Cache-Control": "no-store",
+        "Content-Disposition": `attachment; filename="${filename}"`,
       },
     });
-  } catch (e: any) {
-    return new Response(`Error: ${e.message}`, { status: 500 });
+  } catch (e: unknown) {
+    const msg =
+      e instanceof Error ? e.message : "Error exportando instrumentos.";
+    return NextResponse.json({ success: false, error: msg }, { status: 500 });
   }
 }
