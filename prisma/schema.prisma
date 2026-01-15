@@ -7,22 +7,17 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum Role {
-  ADMIN
-  DOCENTE
-}
-
 model User {
-  id        String       @id @default(cuid())
-  email     String?      @unique
-  name      String?
-  image     String?
-  role      Role         @default(DOCENTE)
-  isAllowed Boolean      @default(false)
-  createdAt DateTime     @default(now())
-  sessions  SessionDoc[]
+  id           String       @id @default(cuid())
+  name         String?
+  email        String?      @unique
+  image        String?
+  role         Role         @default(DOCENTE)
+  isAllowed    Boolean      @default(false)
+  createdAt    DateTime     @default(now())
   /// 🔐 Nuevo: hash de la contraseña (nunca guardes la clave plana)
   passwordHash String?
+  sessions     SessionDoc[]
 }
 
 model Allowlist {
@@ -34,9 +29,13 @@ model Allowlist {
 model SessionDoc {
   id        String   @id @default(cuid())
   userId    String
-  dataJson  Json
   version   String
+  dataJson  Json
   createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+}
 
-  user User @relation(fields: [userId], references: [id])
+enum Role {
+  ADMIN
+  DOCENTE
 }
