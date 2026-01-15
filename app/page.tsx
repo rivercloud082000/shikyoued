@@ -9,8 +9,8 @@ type LoginStatus = "idle" | "DOCENTE" | "ADMIN";
 export default function Home() {
   const router = useRouter();
 
-  const [email, setEmail] = useState("huampuque2000@gmail.com");
-  const [password, setPassword] = useState("Huampuque8");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
 
   const [loading, setLoading] = useState(false);
