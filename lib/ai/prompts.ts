@@ -68,6 +68,7 @@ REGLAS OBLIGATORIAS:
   ▪ Recojo de saberes previos con una pregunta específica.
   ▪ Mención del título de la sesión.
   ▪ Explicación del propósito (como se mencionó antes).
+  ▪ Explicación del contenido o tema central utilizando estrategias de enseñanza acordes al enfoque seleccionado (por ejemplo: modelamiento, resolución guiada de ejemplos, uso de analogías, organizadores visuales, experimentos demostrativos, estudio de casos, etc.), antes de que los estudiantes realicen las actividades grupales e individuales.
   ▪ Explicar criterios de evaluación (mínimo 4).
   ▪ Conflicto cognitivo claro con una pregunta detonante contextualizada.
   ▪ Actividades grupales: describir la actividad específica que harán los estudiantes.
@@ -75,6 +76,8 @@ REGLAS OBLIGATORIAS:
   ▪ Retroalimentación colectiva + corrección de errores comunes indicando cómo se corregirán.
   ▪ Preguntas de metacognición, incluir al menos dos preguntas de metacognición.
   ▪ Reflexión final, incluir al menos una pregunta de reflexión final. 
+
+- La explicación del contenido debe describir cómo el docente desarrolla las ideas clave del tema en el aula (estrategias, ejemplos, andamiajes, organizadores, demostraciones, etc.) de manera coherente con el enfoque pedagógico seleccionado.
 
 - Las actividades deben estar descritas como si se dictara en el aula real, nada de actividades fuera del aula, con lenguaje natural pero técnico.
 - Los criterios de evaluación deben reflejar lo que el docente espera que el estudiante aprenda (mínimo 4, claros, técnicos y relacionados al tema).
@@ -89,6 +92,8 @@ REGLAS OBLIGATORIAS:
   ["Guía de observación"]
   ["Escala de valoración"]
   No agregues textos como "Evaluación cualitativa-Cuantitativa" en este campo.
+
+- El instrumento de evaluación y los criterios formulados deben estar directamente alineados con las actividades trabajadas en el desarrollo de la sesión (actividades grupales e individuales) y con las evidencias planteadas. No diseñes instrumentos que evalúen algo que no se haya trabajado en la secuencia didáctica.
 
 - No incluir ningún campo como "evidencia de aprendiza" o "instrumento" dentro de "secuenciaDidactica". Todos deben ir como propiedades externas dentro del objeto "filas".
 - Evidencias deben ser coherentes con el tema. Siempre incluir:
@@ -221,7 +226,6 @@ Los criterios de evaluación deben formularse como indicadores que se cumplen o 
   };
 }
 
-
 export function buildUserPrompt({
   datos,
   tituloSesion,
@@ -280,12 +284,14 @@ ${getEnfoqueRules(datos.enfoque ?? "MINEDU")}
   ▪ Recojo de saberes previos
   ▪ Título de la sesión
   ▪ Propósito explicado
+  ▪ Explicación del contenido o tema central utilizando estrategias de enseñanza coherentes con el enfoque seleccionado (modelamiento, resolución guiada de ejemplos, uso de analogías, organizadores visuales, experimentos demostrativos, etc.), antes de las actividades grupales e individuales.
   ▪ Criterios de evaluación (mínimo 4)
   ▪ Conflicto cognitivo contextualizado
   ▪ Actividades grupales (descripción clara)
   ▪ Actividades individuales (pasos detallados)
   ▪ Retroalimentación
   ▪ Preguntas de metacognición / reflexión final
+- La explicación del contenido debe describir cómo el docente presenta y desarrolla el tema en el aula (ideas clave, ejemplos, andamiajes y recursos) antes de que los estudiantes pasen a resolver las actividades.
 - Las actividades deben estar redactadas para aplicarse en aula real, con lenguaje natural pero técnico.
 - Criterios y evidencias deben estar claramente separados.
 - Las evidencias deben incluir:
@@ -298,7 +304,7 @@ ${getEnfoqueRules(datos.enfoque ?? "MINEDU")}
   • Tipo: ${instrumentoConfig.nombre}.
   • ${instrumentoConfig.instruccion}
 - Asegúrate de que el campo "instrumento" del JSON refleje exactamente este tipo
-  y que los "criteriosEvaluacion" sean coherentes con el instrumento y el tema.
+  y que los "criteriosEvaluacion" sean coherentes con el instrumento, el tema trabajado y las actividades centrales descritas en la secuencia didáctica (especialmente en el desarrollo de la sesión).
 
 `.trim();
 }
